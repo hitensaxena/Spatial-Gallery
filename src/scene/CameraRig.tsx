@@ -57,7 +57,9 @@ export function CameraRig() {
     audioManager.setProjectMix(focusEase)
 
     const isFocus = state.mode === 'focus'
-    const timeScale = 1 - focusEase * 0.55
+    const portalGravity = scrollController.getPortalGravity()
+    const portalEase = portalGravity * portalGravity * (3 - 2 * portalGravity)
+    const timeScale = (1 - focusEase * 0.55) * (1 - portalEase * 0.12)
     const scaledDt = dt * timeScale
 
     scrollController.update(scaledDt)
@@ -78,7 +80,7 @@ export function CameraRig() {
 
     const p = state.mode === 'focus' ? focusP : journeyP
 
-    const wobble = Math.sin(p * Math.PI * 2) * 0.008
+    const wobble = Math.sin(p * Math.PI * 2) * (0.008 * (1 - portalEase * 0.8))
     const modulated = THREE.MathUtils.clamp(p + wobble, 0, 1)
     const eased = smoothStep(modulated)
 

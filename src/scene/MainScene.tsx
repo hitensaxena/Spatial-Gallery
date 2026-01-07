@@ -9,6 +9,10 @@ import { ProjectArtifact } from '../objects/ProjectArtifact'
 import { projects } from '../data/projects'
 import { projectUFromIndex, sampleCameraPath } from './CameraPath'
 import { interactionState } from '../interaction/InteractionState'
+import { scrollController } from '../interaction/ScrollController'
+
+const portalU = 0.06
+scrollController.setPortalU(portalU)
 
 function LightRig() {
   const ambientRef = useRef<THREE.AmbientLight>(null)
@@ -48,8 +52,13 @@ export function MainScene() {
       <CameraRig />
 
       {(() => {
-        const s = sampleCameraPath(0.04)
-        return <Portal position={[s.point.x, s.point.y, s.point.z]} />
+        const s = sampleCameraPath(portalU)
+        const pos = s.point
+          .clone()
+          .add(s.tangent.clone().multiplyScalar(6.5))
+          .add(s.right.clone().multiplyScalar(0.65))
+          .add(new THREE.Vector3(0, 0.25, 0))
+        return <Portal position={[pos.x, pos.y, pos.z]} />
       })()}
 
       {projects.map((p, i) => {

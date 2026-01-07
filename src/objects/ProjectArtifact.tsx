@@ -15,6 +15,8 @@ type ProjectArtifactProps = {
 export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
   const groupRef = useRef<THREE.Group>(null)
   const meshRef = useRef<THREE.Mesh>(null)
+  const glowRef = useRef<THREE.Mesh>(null)
+  const lightRef = useRef<THREE.PointLight>(null)
   const textRef = useRef<THREE.Group>(null)
   const tmpWorldPos = useRef(new THREE.Vector3())
   const tmpForward = useRef(new THREE.Vector3())
@@ -22,6 +24,7 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
   const wasFocusedRef = useRef(false)
 
   const geometry = useMemo(() => new THREE.IcosahedronGeometry(0.55, 0), [])
+  const glowGeometry = useMemo(() => new THREE.IcosahedronGeometry(0.62, 0), [])
   const material = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
@@ -32,6 +35,42 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
         opacity: 0.0,
         emissive: new THREE.Color('#0b0d12'),
         emissiveIntensity: 0.5,
+      }),
+    [],
+  )
+
+  const glowMaterial = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide,
+        uniforms: {
+          uColor: { value: new THREE.Color('#b6c6ff') },
+          uPower: { value: 3.8 },
+          uIntensity: { value: 0.0 },
+        },
+        vertexShader:
+          'varying vec3 vN;\n'
+          + 'varying vec3 vV;\n'
+          + 'void main() {\n'
+          + '  vec4 wp = modelMatrix * vec4(position, 1.0);\n'
+          + '  vN = normalize(normalMatrix * normal);\n'
+          + '  vV = normalize(cameraPosition - wp.xyz);\n'
+          + '  gl_Position = projectionMatrix * viewMatrix * wp;\n'
+          + '}\n',
+        fragmentShader:
+          'uniform vec3 uColor;\n'
+          + 'uniform float uPower;\n'
+          + 'uniform float uIntensity;\n'
+          + 'varying vec3 vN;\n'
+          + 'varying vec3 vV;\n'
+          + 'void main() {\n'
+          + '  float fres = pow(1.0 - max(0.0, dot(normalize(vN), normalize(vV))), uPower);\n'
+          + '  float a = fres * uIntensity;\n'
+          + '  gl_FragColor = vec4(uColor, a);\n'
+          + '}\n',
       }),
     [],
   )
@@ -127,6 +166,12 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
     return raw.slice(0, maxChars - 1).trimEnd() + '…'
   }, [project.description])
 
+  const pulsePhase = useMemo(() => {
+    let h = 0
+    for (let i = 0; i < project.id.length; i++) h = (h * 31 + project.id.charCodeAt(i)) >>> 0
+    return (h % 1000) / 1000
+  }, [project.id])
+
   useFrame(({ camera, clock }, dt) => {
     const group = groupRef.current
     const mesh = meshRef.current
@@ -215,7 +260,38 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
 
     const brightness = isFocused ? 1 : THREE.MathUtils.clamp(0.7 + cue * 0.6, 0, 1)
     material.color.lerpColors(baseColor, brightColor, brightness)
-    material.emissiveIntensity = THREE.MathUtils.damp(material.emissiveIntensity, 0.32 + cue * 0.85, 3.5, 1 / 60)
+    material.emissiveIntensity = THREE.MathUtils.damp(material.emissiveIntensity, 0.34 + cue * 1.15 + (isFocused ? 0.35 : 0), 3.5, 1 / 60)
+
+    const ph = clock.getElapsedTime() * 1.8 + pulsePhase * Math.PI * 2
+    const s = 0.5 + 0.5 * Math.sin(ph)
+    const breath = s * s * (3 - 2 * s)
+    const baseGlow = 0.25 + cue * 0.35 + (isFocused ? 0.55 : 0)
+    const ampGlow = 0.9 + cue * 0.8 + (isFocused ? 0.95 : 0)
+    const glowTarget = baseGlow + ampGlow * breath
+    ;(glowMaterial.uniforms.uIntensity.value as number) = THREE.MathUtils.damp(
+      glowMaterial.uniforms.uIntensity.value as number,
+      glowTarget,
+      4.0,
+      1 / 60,
+    )
+    if (glowRef.current) {
+      glowRef.current.rotation.copy(mesh.rotation)
+      const sTarget = 1.1 + cue * 0.12 + (isFocused ? 0.18 : 0.08) + breath * 0.14
+      glowRef.current.scale.setScalar(THREE.MathUtils.damp(glowRef.current.scale.x, sTarget, 5.0, 1 / 60))
+    }
+
+    if (lightRef.current) {
+      const ph = clock.getElapsedTime() * 1.8 + pulsePhase * Math.PI * 2
+      const s = 0.5 + 0.5 * Math.sin(ph)
+      const breath = s * s * (3 - 2 * s)
+      const base = 0.28 + cue * 0.25 + (isFocused ? 0.65 : 0)
+      const amp = 1.05 + cue * 0.95 + (isFocused ? 1.15 : 0)
+      const target = base + amp * breath
+      lightRef.current.intensity = THREE.MathUtils.damp(lightRef.current.intensity, target, 4.0, 1 / 60)
+
+      const spread = 10 + cue * 10 + (isFocused ? 12 : 0) + breath * 6
+      lightRef.current.distance = THREE.MathUtils.damp(lightRef.current.distance, spread, 3.0, 1 / 60)
+    }
 
     if (textRef.current) {
       const scale = isFocused
@@ -253,6 +329,15 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
   return (
     <group ref={groupRef} position={position} onClick={onClick}>
       <mesh ref={meshRef} geometry={geometry} material={material} />
+      <mesh ref={glowRef} geometry={glowGeometry} material={glowMaterial} />
+      <pointLight
+        ref={lightRef}
+        position={[0, 0.15, 0.35]}
+        intensity={0.22}
+        color="#b6c6ff"
+        distance={7.5}
+        decay={2}
+      />
       <group ref={detailGroupRef}>
         <group ref={coverRef} position={[0, 0.18, 0.42]} scale={0.9}>
           <mesh material={detailMat} position={[0, 0, 0]} scale={[2.65, 1.6, 1]}>

@@ -25,6 +25,9 @@ export class ScrollController {
   private lastRaw = 0
   private lastInputAt = 0
 
+  private portalU = 0.06
+  private portalGravity = 0
+
   private warpXs: number[] = []
   private warpYs: number[] = []
 
@@ -38,6 +41,14 @@ export class ScrollController {
 
   getTargetProgress() {
     return this.target
+  }
+
+  setPortalU(u: number) {
+    this.portalU = Math.min(1, Math.max(0, u))
+  }
+
+  getPortalGravity() {
+    return this.portalGravity
   }
 
   setTargetProgress(p: number) {
@@ -56,6 +67,28 @@ export class ScrollController {
   }
 
   update(dt: number) {
+    const state = interactionState.getState()
+
+    if (state.mode === 'journey') {
+      const radius = 0.18
+      const d = Math.abs(this.value - this.portalU)
+      const t = Math.min(1, Math.max(0, 1 - d / radius))
+      const s = t * t * (3 - 2 * t)
+      this.portalGravity = s
+
+      const now = performance.now()
+      const since = (now - this.lastInputAt) / 1000
+      const idle = Math.min(1, Math.max(0, (since - 0.12) / 0.55))
+
+      if (idle > 0 && this.target < this.portalU) {
+        const maxSpeed = 0.01
+        const step = maxSpeed * this.portalGravity * idle * dt
+        this.target = Math.min(this.portalU, this.target + step)
+      }
+    } else {
+      this.portalGravity = 0
+    }
+
     const k = this.smoothing
     const x = this.value
     const v = this.velocity
