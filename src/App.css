@@ -1,0 +1,15 @@
+.app {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+}
+
+.scene {
+  position: fixed;
+  inset: 0;
+}
+
+.scroll-space {
+  height: 1200vh;
+  width: 1px;
+}
