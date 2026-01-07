@@ -25,6 +25,9 @@ export class ScrollController {
   private lastRaw = 0
   private lastInputAt = 0
 
+  private neutralStartAt = 0
+  private neutralDuration = 0
+
   private portalU = 0.06
   private portalGravity = 0
 
@@ -49,6 +52,18 @@ export class ScrollController {
 
   getPortalGravity() {
     return this.portalGravity
+  }
+
+  beginNeutralPhase(durationSeconds = 0.7) {
+    this.neutralStartAt = performance.now()
+    this.neutralDuration = Math.max(0, durationSeconds)
+  }
+
+  getNeutralRecovery() {
+    if (this.neutralDuration <= 0) return 1
+    const t = (performance.now() - this.neutralStartAt) / 1000
+    const x = Math.min(1, Math.max(0, t / this.neutralDuration))
+    return x * x * (3 - 2 * x)
   }
 
   setTargetProgress(p: number) {
@@ -175,21 +190,38 @@ export class ScrollController {
     if (state.mode === 'focus') return { projectId: null, factor: 0 }
     if (projects.length === 0) return { projectId: null, factor: 0 }
 
+    if (this.neutralDuration > 0) {
+      const t = (performance.now() - this.neutralStartAt) / 1000
+      if (t >= 0 && t < this.neutralDuration) return { projectId: null, factor: 0 }
+    }
+
     const u = this.getProgress()
 
+    const radius = 0.095
+    const gamma = 1.9
+
     let bestIdx = 0
-    let bestD = Infinity
+    let best = 0
+    let second = 0
+
     for (let i = 0; i < this.projectUs.length; i++) {
       const d = Math.abs(u - this.projectUs[i]!)
-      if (d < bestD) {
-        bestD = d
+      if (d >= radius) continue
+      const t = 1 - d / radius
+      const s = t * t * (3 - 2 * t)
+      const influence = Math.pow(s, gamma)
+
+      if (influence > best) {
+        second = best
+        best = influence
         bestIdx = i
+      } else if (influence > second) {
+        second = influence
       }
     }
 
-    const radius = 0.12
-    const t = Math.min(1, Math.max(0, 1 - bestD / radius))
-    const s = t * t * (3 - 2 * t)
+    const separation = Math.min(1, Math.max(0, (best - second) * 2.2))
+    const s = best * separation
 
     const speed = Math.abs(this.velocity)
     const speedNorm = Math.min(1, Math.max(0, speed * 2.2))

@@ -53,13 +53,23 @@ export function CameraRig() {
     const focusAmount = state.focusAmount
     const focusEase = focusAmount * focusAmount * (3 - 2 * focusAmount)
 
-    audioManager.setGlobalMix(1 - focusEase * 0.6)
-    audioManager.setProjectMix(focusEase)
-
     const isFocus = state.mode === 'focus'
     const portalGravity = scrollController.getPortalGravity()
     const portalEase = portalGravity * portalGravity * (3 - 2 * portalGravity)
-    const timeScale = (1 - focusEase * 0.55) * (1 - portalEase * 0.12)
+    const arrival = scrollController.getArrivalState().factor
+
+    const proximityProject = Math.min(1, arrival * 1.2)
+    const proximityPortal = Math.min(1, portalEase)
+
+    const ambient = 1 - Math.min(1, focusEase * 0.65 + proximityProject * 0.35 + proximityPortal * 0.15)
+    const project = Math.min(1, focusEase * 1.0 + proximityProject * 0.85)
+
+    audioManager.setAmbientMix(ambient)
+    audioManager.setGlobalMix(ambient)
+    audioManager.setProjectMix(project)
+    const neutral = scrollController.getNeutralRecovery()
+    const recoveryScale = 0.82 + 0.18 * neutral
+    const timeScale = (1 - focusEase * 0.55) * (1 - portalEase * 0.12) * recoveryScale
     const scaledDt = dt * timeScale
 
     scrollController.update(scaledDt)

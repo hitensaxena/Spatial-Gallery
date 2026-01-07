@@ -1,4 +1,4 @@
-import { Canvas, useFrame } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { useRef } from 'react'
 import * as THREE from 'three'
 
@@ -15,26 +15,64 @@ const portalU = 0.06
 scrollController.setPortalU(portalU)
 
 function LightRig() {
+  const { camera } = useThree()
   const ambientRef = useRef<THREE.AmbientLight>(null)
-  const hemiRef = useRef<THREE.HemisphereLight>(null)
-  const keyRef = useRef<THREE.PointLight>(null)
+  const moonRef = useRef<THREE.PointLight>(null)
+  const tmpColor = useRef(new THREE.Color())
 
   useFrame((_, dt) => {
     const focus = interactionState.getState().focusAmount
-    const ease = focus * focus * (3 - 2 * focus)
+    const focusEase = focus * focus * (3 - 2 * focus)
+    const arrival = scrollController.getArrivalState().factor
+    const arrivalId = scrollController.getArrivalState().projectId
+    const portal = scrollController.getPortalGravity()
+    const focusedId = interactionState.getState().focusedProjectId
 
-    if (ambientRef.current) ambientRef.current.intensity = THREE.MathUtils.damp(ambientRef.current.intensity, 0.26 - ease * 0.07, 2.2, dt)
-    if (hemiRef.current) hemiRef.current.intensity = THREE.MathUtils.damp(hemiRef.current.intensity, 0.35 - ease * 0.12, 2.2, dt)
-    if (keyRef.current) keyRef.current.intensity = THREE.MathUtils.damp(keyRef.current.intensity, 0.65 + ease * 0.25, 2.2, dt)
+    const activeId = focusedId ?? arrivalId
+    const profile = projects.find((p) => p.id === activeId)?.lighting
+    const profileColor = profile?.color ?? '#b8c2d6'
+    const profileIntensity = profile?.intensity ?? 1
+
+    const lift = Math.min(1, arrival * 0.9 + portal * 0.9)
+    const dim = 1 - focusEase * 0.25
+
+    const personality = THREE.MathUtils.clamp(arrival * 0.6 + focusEase * 0.85, 0, 1)
+    tmpColor.current.set('#b8c2d6').lerp(new THREE.Color(profileColor), personality * 0.25)
+
+    if (ambientRef.current) {
+      const target = (0.07 + lift * 0.05) * dim
+      ambientRef.current.intensity = THREE.MathUtils.damp(ambientRef.current.intensity, target, 2.2, dt)
+      ambientRef.current.color.lerp(tmpColor.current, 1 - Math.exp(-1.5 * dt))
+    }
+
+    if (moonRef.current) {
+      const forward = new THREE.Vector3()
+      camera.getWorldDirection(forward)
+      const pos = camera.position
+        .clone()
+        .add(forward.multiplyScalar(18))
+        .add(new THREE.Vector3(0, 10, 0))
+
+      moonRef.current.position.lerp(pos, 1 - Math.exp(-3.0 * dt))
+
+      const target = (0.35 + lift * 0.35) * dim * (0.95 + 0.08 * profileIntensity)
+      moonRef.current.intensity = THREE.MathUtils.damp(moonRef.current.intensity, target, 2.2, dt)
+      moonRef.current.distance = THREE.MathUtils.damp(moonRef.current.distance, 55 + lift * 35, 2.2, dt)
+      moonRef.current.color.lerp(tmpColor.current, 1 - Math.exp(-1.5 * dt))
+    }
   })
 
   return (
     <>
-      <ambientLight ref={ambientRef} intensity={0.26} />
-      <hemisphereLight ref={hemiRef} intensity={0.35} color="#5a6b8f" groundColor="#06070d" />
-      <pointLight ref={keyRef} position={[0.6, 1.2, 1.2]} intensity={0.65} color="#c9d3e8" distance={22} />
-      <pointLight position={[-1.2, -0.4, -2.5]} intensity={0.25} color="#3d4a68" distance={28} />
-      <directionalLight position={[2, 3.5, 2.5]} intensity={0.25} color="#b8c2d6" />
+      <ambientLight ref={ambientRef} intensity={0.07} color="#cfd6e6" />
+      <pointLight
+        ref={moonRef}
+        position={[0, 10, 10]}
+        intensity={0.35}
+        color="#b8c2d6"
+        distance={55}
+        decay={2}
+      />
     </>
   )
 }

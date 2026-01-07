@@ -4,6 +4,7 @@ import { useMemo, useRef } from 'react'
 import * as THREE from 'three'
 
 import type { Project } from '../data/projects'
+import { audioManager } from '../audio/AudioManager'
 import { interactionState } from '../interaction/InteractionState'
 import { scrollController } from '../interaction/ScrollController'
 
@@ -213,6 +214,10 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
 
     const isFocused = state.mode === 'focus' && state.focusedProjectId === project.id
 
+    const prox = THREE.MathUtils.clamp((14.0 - dist) / (14.0 - 2.5), 0, 1)
+    const audioLevel = Math.min(1, prox * 0.85 + cue * 0.65 + (isFocused ? 0.9 : 0))
+    audioManager.setProjectLevel(project.id, audioLevel)
+
     const focusAmt = isFocused ? state.focusAmount : 0
     const cover = THREE.MathUtils.clamp((focusAmt - 0.05) / 0.35, 0, 1)
     const title = THREE.MathUtils.clamp((focusAmt - 0.18) / 0.45, 0, 1)
@@ -281,16 +286,23 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
     }
 
     if (lightRef.current) {
-      const ph = clock.getElapsedTime() * 1.8 + pulsePhase * Math.PI * 2
-      const s = 0.5 + 0.5 * Math.sin(ph)
-      const breath = s * s * (3 - 2 * s)
-      const base = 0.28 + cue * 0.25 + (isFocused ? 0.65 : 0)
-      const amp = 1.05 + cue * 0.95 + (isFocused ? 1.15 : 0)
-      const target = base + amp * breath
-      lightRef.current.intensity = THREE.MathUtils.damp(lightRef.current.intensity, target, 4.0, 1 / 60)
+      const profile = project.lighting
+      const baseColor = new THREE.Color('#b8c2d6')
+      const targetColor = new THREE.Color(profile?.color ?? '#b8c2d6')
 
-      const spread = 10 + cue * 10 + (isFocused ? 12 : 0) + breath * 6
-      lightRef.current.distance = THREE.MathUtils.damp(lightRef.current.distance, spread, 3.0, 1 / 60)
+      const personality = THREE.MathUtils.clamp(cue * 0.7 + focusAmt * 0.85, 0, 1)
+      const color = baseColor.lerp(targetColor, personality * 0.35)
+      lightRef.current.color.lerp(color, 1 - Math.exp(-2.2 * dt))
+
+      const baseI = 0.12
+      const profI = profile?.intensity ?? 1
+      const targetI = baseI * (0.7 + profI * 0.6) + personality * (0.18 + profI * 0.22)
+      lightRef.current.intensity = THREE.MathUtils.damp(lightRef.current.intensity, targetI, 2.6, dt)
+
+      const baseD = profile?.distance ?? 11
+      const targetD = baseD + personality * (6 + baseD * 0.25)
+      lightRef.current.distance = THREE.MathUtils.damp(lightRef.current.distance, targetD, 2.6, dt)
+      lightRef.current.decay = 2
     }
 
     if (textRef.current) {
@@ -315,6 +327,7 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
     if (state.mode === 'focus') {
       if (state.focusedProjectId === project.id) {
         interactionState.exitFocus()
+        scrollController.beginNeutralPhase(0.75)
         scrollController.setTargetProgress(state.journeyProgress)
         return
       }

@@ -3,6 +3,9 @@ export class AudioManager {
 
   private globalMix = 1
   private projectMix = 0
+  private ambientMix = 1
+
+  private projectLevels = new Map<string, number>()
 
   ensureContext() {
     if (this.ctx) return this.ctx
@@ -28,8 +31,30 @@ export class AudioManager {
     this.projectMix = Math.min(1, Math.max(0, value))
   }
 
+  setAmbientMix(value: number) {
+    this.ambientMix = Math.min(1, Math.max(0, value))
+  }
+
+  setProjectLevel(projectId: string, value: number) {
+    this.projectLevels.set(projectId, Math.min(1, Math.max(0, value)))
+  }
+
+  getProjectLevel(projectId: string) {
+    return this.projectLevels.get(projectId) ?? 0
+  }
+
+  getMaxProjectLevel() {
+    let best = 0
+    for (const v of this.projectLevels.values()) best = Math.max(best, v)
+    return best
+  }
+
   getMix() {
-    return { globalMix: this.globalMix, projectMix: this.projectMix }
+    return {
+      globalMix: this.globalMix,
+      ambientMix: this.ambientMix,
+      projectMix: this.projectMix,
+    }
   }
 }
 
