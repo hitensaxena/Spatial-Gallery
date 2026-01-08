@@ -6,6 +6,10 @@ export class AudioContextManager {
   private toneReady = false
   private started = false
 
+  isStarted() {
+    return this.started
+  }
+
   initWithListener(listener: THREE.AudioListener) {
     this.listener = listener
 

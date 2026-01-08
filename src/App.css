@@ -13,3 +13,40 @@
   height: 1200vh;
   width: 1px;
 }
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 3, 8, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  cursor: default;
+}
+
+.overlay[role='button'] {
+  cursor: pointer;
+}
+
+.overlay-inner {
+  width: min(520px, calc(100vw - 48px));
+  text-align: center;
+  padding: 28px 26px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(7, 8, 11, 0.55);
+}
+
+.overlay-title {
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.overlay-subtitle {
+  margin-top: 10px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.62);
+}
