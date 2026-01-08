@@ -6,7 +6,7 @@ import { interactionState } from '../interaction/InteractionState'
 import { scrollController } from '../interaction/ScrollController'
 import { projects } from '../data/projects'
 import { projectUFromIndex, sampleCameraPath } from './CameraPath'
-import { audioManager } from '../audio/AudioManager'
+import { spatialAudioSystem } from '../audio/spatial'
 
 function smoothStep(x: number) {
   const t = THREE.MathUtils.clamp(x, 0, 1)
@@ -21,6 +21,7 @@ function projectProgressById(id: string) {
 
 export function CameraRig() {
   const { camera } = useThree()
+  const listenerRef = useRef<THREE.AudioListener | null>(null)
   const lookAt = useRef(new THREE.Vector3(0, 0, 0))
   const desiredPos = useRef(new THREE.Vector3(0, 0.2, 4))
   const baseFov = useRef((camera as THREE.PerspectiveCamera).fov)
@@ -44,7 +45,22 @@ export function CameraRig() {
     return scrollController.attachWindowScroll()
   }, [])
 
-  useEffect(() => cleanup, [cleanup])
+  useEffect(() => {
+    const cam = camera as unknown as THREE.Camera
+    const listener = new THREE.AudioListener()
+    listenerRef.current = listener
+    cam.add(listener)
+
+    spatialAudioSystem.init(listener)
+    const removeUnlock = spatialAudioSystem.installUnlockHandlers(window)
+
+    return () => {
+      removeUnlock()
+      cam.remove(listener)
+      listenerRef.current = null
+      cleanup()
+    }
+  }, [camera, cleanup])
 
   useFrame(({ clock }, dt) => {
     interactionState.update(dt)
@@ -56,17 +72,13 @@ export function CameraRig() {
     const isFocus = state.mode === 'focus'
     const portalGravity = scrollController.getPortalGravity()
     const portalEase = portalGravity * portalGravity * (3 - 2 * portalGravity)
-    const arrival = scrollController.getArrivalState().factor
-
-    const proximityProject = Math.min(1, arrival * 1.2)
-    const proximityPortal = Math.min(1, portalEase)
-
-    const ambient = 1 - Math.min(1, focusEase * 0.65 + proximityProject * 0.35 + proximityPortal * 0.15)
-    const project = Math.min(1, focusEase * 1.0 + proximityProject * 0.85)
-
-    audioManager.setAmbientMix(ambient)
-    audioManager.setGlobalMix(ambient)
-    audioManager.setProjectMix(project)
+    const arrivalState = scrollController.getArrivalState()
+    spatialAudioSystem.updateDrive({
+      focusAmount,
+      nearestProjectId: arrivalState.projectId,
+      nearestProjectFactor: arrivalState.factor,
+      portalGravity,
+    })
     const neutral = scrollController.getNeutralRecovery()
     const recoveryScale = 0.82 + 0.18 * neutral
     const timeScale = (1 - focusEase * 0.55) * (1 - portalEase * 0.12) * recoveryScale

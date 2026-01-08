@@ -1,10 +1,10 @@
-import { Text } from '@react-three/drei'
+import { Text, useTexture } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 
 import type { Project } from '../data/projects'
-import { audioManager } from '../audio/AudioManager'
+import { spatialAudioSystem } from '../audio/spatial'
 import { interactionState } from '../interaction/InteractionState'
 import { scrollController } from '../interaction/ScrollController'
 
@@ -19,13 +19,124 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
   const glowRef = useRef<THREE.Mesh>(null)
   const lightRef = useRef<THREE.PointLight>(null)
   const textRef = useRef<THREE.Group>(null)
+  const emissiveMemoryStrength = useRef(0)
+  const emissiveMemoryTau = useRef(1.25)
   const tmpWorldPos = useRef(new THREE.Vector3())
   const tmpForward = useRef(new THREE.Vector3())
   const tmpToObj = useRef(new THREE.Vector3())
   const wasFocusedRef = useRef(false)
+  const spatialEmitterRef = useRef<ReturnType<typeof spatialAudioSystem.getOrCreateEmitter> | null>(null)
+  const spatialAttachedRef = useRef(false)
+  const lightMemoryStrength = useRef(0)
+  const lightMemoryTau = useRef(1.3)
+  const lightMemoryColor = useRef(new THREE.Color('#b8c2d6'))
+  const prevFocused = useRef(false)
 
-  const geometry = useMemo(() => new THREE.IcosahedronGeometry(0.55, 0), [])
-  const glowGeometry = useMemo(() => new THREE.IcosahedronGeometry(0.62, 0), [])
+  useEffect(() => {
+    return () => {
+      const group = groupRef.current
+      const emitter = spatialEmitterRef.current
+      if (group && emitter && spatialAttachedRef.current) {
+        group.remove(emitter.positional)
+      }
+      spatialEmitterRef.current = null
+      spatialAttachedRef.current = false
+    }
+  }, [])
+
+  const { geometry, glowGeometry, personality } = useMemo(() => {
+    let h = 2166136261
+    for (let i = 0; i < project.id.length; i++) {
+      h ^= project.id.charCodeAt(i)
+      h = Math.imul(h, 16777619)
+    }
+    const r = ((h >>> 0) % 1000) / 1000
+    const pick = Math.floor(r * 6)
+
+    const tintH = r
+    const tintS = 0.06 + ((h >>> 0) % 7) / 7 * 0.08
+    const tintL = 0.58
+    const roughness = 0.28 + ((h >>> 0) % 13) / 13 * 0.52
+    const metalness = 0.03 + ((h >>> 0) % 11) / 11 * 0.14
+    const size = 0.92 + ((h >>> 0) % 17) / 17 * 0.18
+    const density = 0.85 + ((h >>> 0) % 19) / 19 * 0.3
+
+    const jitter = (g: THREE.BufferGeometry, amount: number) => {
+      const pos = g.attributes.position as THREE.BufferAttribute
+      const v = new THREE.Vector3()
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i)
+        const n = Math.sin((i * 12.9898 + r * 78.233) * 0.7) * 43758.5453
+        const j = (n - Math.floor(n) - 0.5) * 2
+        const k = 1 + amount * j
+        v.multiplyScalar(k)
+        pos.setXYZ(i, v.x, v.y, v.z)
+      }
+      pos.needsUpdate = true
+      g.computeVertexNormals()
+      return g
+    }
+
+    const baseScale = new THREE.Vector3(1, 1, 1)
+    const glowScale = new THREE.Vector3(1.07, 1.07, 1.07)
+
+    let base: THREE.BufferGeometry
+
+    if (pick === 0) {
+      // distorted sphere
+      base = new THREE.SphereGeometry(0.52, 32, 22)
+      baseScale.set(1.05, 0.92, 1.0)
+      jitter(base, 0.08)
+    } else if (pick === 1) {
+      // elongated torus
+      base = new THREE.TorusGeometry(0.42, 0.12, 20, 72)
+      baseScale.set(1.25, 0.92, 1.0)
+    } else if (pick === 2) {
+      // fractured poly
+      base = new THREE.IcosahedronGeometry(0.54, 2)
+      baseScale.set(1.0, 1.0, 1.0)
+      jitter(base, 0.11)
+    } else if (pick === 3) {
+      // soft knot / shell
+      base = new THREE.TorusKnotGeometry(0.28, 0.085, 96, 14, 2, 3)
+      baseScale.set(1.1, 1.05, 1.0)
+    } else if (pick === 4) {
+      // layered ring / shell
+      base = new THREE.TorusGeometry(0.46, 0.08, 20, 90)
+      baseScale.set(1.0, 1.0, 1.0)
+    } else {
+      const pts: THREE.Vector3[] = []
+      for (let i = 0; i < 12; i++) {
+        const t = i / 11
+        const y = -0.36 + t * 0.72
+        const rad = 0.11 + 0.18 * Math.sin(t * Math.PI) + 0.06 * Math.sin(t * Math.PI * 2 + r * Math.PI * 2)
+        pts.push(new THREE.Vector3(rad, y, 0))
+      }
+      base = new THREE.LatheGeometry(pts as any, 40)
+      baseScale.set(1.05, 0.95, 1.05)
+      jitter(base, 0.06)
+    }
+
+    base.applyMatrix4(new THREE.Matrix4().makeScale(baseScale.x, baseScale.y, baseScale.z))
+
+    const glow = base.clone()
+    glow.applyMatrix4(new THREE.Matrix4().makeScale(glowScale.x, glowScale.y, glowScale.z))
+
+    return {
+      geometry: base,
+      glowGeometry: glow,
+      personality: {
+        r,
+        tintH,
+        tintS,
+        tintL,
+        roughness,
+        metalness,
+        size,
+        density,
+      },
+    }
+  }, [project.id])
   const material = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
@@ -45,11 +156,11 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
       new THREE.ShaderMaterial({
         transparent: true,
         depthWrite: false,
-        blending: THREE.AdditiveBlending,
+        blending: THREE.NormalBlending,
         side: THREE.BackSide,
         uniforms: {
           uColor: { value: new THREE.Color('#b6c6ff') },
-          uPower: { value: 3.8 },
+          uPower: { value: 4.4 },
           uIntensity: { value: 0.0 },
         },
         vertexShader:
@@ -85,6 +196,8 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
 
   const baseColor = useMemo(() => new THREE.Color('#d7dde7'), [])
   const brightColor = useMemo(() => new THREE.Color('#f1f5ff'), [])
+  const neutralEmissive = useMemo(() => new THREE.Color('#0b0d12'), [])
+  const tmpEmissive = useMemo(() => new THREE.Color(), [])
 
   const detailMat = useMemo(
     () =>
@@ -99,54 +212,42 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
     [],
   )
 
+  const coverUrl = useMemo(() => {
+    const img = project.media?.find((m) => m.kind === 'image')
+    return img?.href ?? null
+  }, [project.media])
+
+  const loadedCoverTex = useTexture(coverUrl || '/vite.svg')
   const coverTex = useMemo(() => {
-    const size = 512
-    const canvas = document.createElement('canvas')
-    canvas.width = size
-    canvas.height = size
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return null
+    if (!loadedCoverTex) return null
+    loadedCoverTex.colorSpace = THREE.SRGBColorSpace
+    loadedCoverTex.needsUpdate = true
 
-    let h = 0
-    for (let i = 0; i < project.id.length; i++) h = (h * 31 + project.id.charCodeAt(i)) >>> 0
+    loadedCoverTex.generateMipmaps = false
+    loadedCoverTex.minFilter = THREE.LinearFilter
+    loadedCoverTex.magFilter = THREE.LinearFilter
 
-    const c1 = `hsl(${h % 360} 45% 24%)`
-    const c2 = `hsl(${(h + 120) % 360} 55% 18%)`
-    const g = ctx.createLinearGradient(0, 0, size, size)
-    g.addColorStop(0, c1)
-    g.addColorStop(1, c2)
-    ctx.fillStyle = g
-    ctx.fillRect(0, 0, size, size)
+    loadedCoverTex.wrapS = THREE.RepeatWrapping
+    loadedCoverTex.wrapT = THREE.RepeatWrapping
 
-    ctx.globalAlpha = 0.12
-    ctx.fillStyle = '#ffffff'
-    for (let i = 0; i < 140; i++) {
-      const x = ((h + i * 9973) % size) + Math.sin(i) * 8
-      const y = ((h + i * 7919) % size) + Math.cos(i * 0.7) * 8
-      const r = 1 + (i % 4)
-      ctx.beginPath()
-      ctx.arc(x, y, r, 0, Math.PI * 2)
-      ctx.fill()
+    const img = loadedCoverTex.image as { width?: number; height?: number } | undefined
+    const iw = img?.width ?? 1
+    const ih = img?.height ?? 1
+    const texAspect = iw / ih
+    const frameAspect = 1.05 / 1.38
+
+    if (texAspect > frameAspect) {
+      const sx = frameAspect / texAspect
+      loadedCoverTex.repeat.set(sx, 1)
+      loadedCoverTex.offset.set((1 - sx) * 0.5, 0)
+    } else {
+      const sy = texAspect / frameAspect
+      loadedCoverTex.repeat.set(1, sy)
+      loadedCoverTex.offset.set(0, (1 - sy) * 0.5)
     }
 
-    ctx.globalAlpha = 0.9
-    ctx.fillStyle = 'rgba(5, 6, 10, 0.45)'
-    ctx.fillRect(0, size * 0.72, size, size * 0.28)
-
-    ctx.fillStyle = 'rgba(240, 245, 255, 0.95)'
-    ctx.font = 'bold 48px system-ui, -apple-system, Segoe UI, Roboto, sans-serif'
-    ctx.textAlign = 'left'
-    ctx.textBaseline = 'alphabetic'
-    ctx.fillText(project.title.slice(0, 18), 28, size * 0.82)
-    ctx.globalAlpha = 0.7
-    ctx.font = '28px system-ui, -apple-system, Segoe UI, Roboto, sans-serif'
-    ctx.fillText(project.subtitle.slice(0, 22), 28, size * 0.9)
-
-    const tex = new THREE.CanvasTexture(canvas)
-    tex.colorSpace = THREE.SRGBColorSpace
-    tex.needsUpdate = true
-    return tex
-  }, [project.id, project.subtitle, project.title])
+    return loadedCoverTex
+  }, [loadedCoverTex])
 
   const coverMat = useMemo(() => {
     if (!coverTex) return null
@@ -154,11 +255,27 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
       map: coverTex,
       transparent: true,
       opacity: 0,
+      emissive: new THREE.Color('#ffffff'),
+      emissiveIntensity: 0.55,
       roughness: 0.95,
       metalness: 0,
       side: THREE.DoubleSide,
     })
   }, [coverTex])
+
+  const titleLine = useMemo(() => {
+    const raw = project.title ?? ''
+    const maxChars = 26
+    if (raw.length <= maxChars) return raw
+    return raw.slice(0, maxChars - 1).trimEnd() + '…'
+  }, [project.title])
+
+  const subtitleLine = useMemo(() => {
+    const raw = project.subtitle ?? ''
+    const maxChars = 32
+    if (raw.length <= maxChars) return raw
+    return raw.slice(0, maxChars - 1).trimEnd() + '…'
+  }, [project.subtitle])
 
   const descriptionText = useMemo(() => {
     const maxChars = 170
@@ -179,7 +296,7 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
     if (!group || !mesh) return
 
     const state = interactionState.getState()
-    const timeScale = state.mode === 'focus' ? 0.35 : 0.55
+    const timeScale = state.mode === 'focus' ? 0.08 : 0.12
     const t = clock.getElapsedTime() * timeScale
 
     const arrival = scrollController.getArrivalState()
@@ -187,17 +304,30 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
     const cue = isNearest ? arrival.factor : 0
     const deEmphasis = isNearest ? 1 : 1 - arrival.factor * 0.75
 
-    const settle = 1 - cue * 0.65
+    const settle = 1 - cue * 0.35
     group.position.set(
       position[0],
-      position[1] + Math.sin(t * 0.22) * (0.018 * settle) + Math.sin(t * 0.06) * (0.006 * (0.5 + cue)),
+      position[1] + Math.sin(t * 0.18 + pulsePhase) * (0.008 * settle) + Math.sin(t * 0.041 + pulsePhase * 2.1) * (0.004 * (0.5 + cue)),
       position[2],
     )
-    mesh.rotation.y = t * (0.07 * settle)
-    mesh.rotation.x = t * (0.05 * settle)
+    mesh.rotation.y = Math.sin(t * 0.17 + pulsePhase * 6.1) * (0.12 * settle)
+    mesh.rotation.x = Math.sin(t * 0.11 + pulsePhase * 3.9) * (0.08 * settle)
+    mesh.rotation.z = Math.sin(t * 0.07 + pulsePhase * 5.3) * (0.06 * settle)
 
     const artifactWorldPos = tmpWorldPos.current
     group.getWorldPosition(artifactWorldPos)
+
+    if (!spatialEmitterRef.current) {
+      spatialEmitterRef.current = spatialAudioSystem.getOrCreateEmitter(project.id)
+    }
+    const emitter = spatialEmitterRef.current
+    if (emitter) {
+      if (!spatialAttachedRef.current) {
+        group.add(emitter.positional)
+        emitter.positional.position.set(0, 0, 0)
+        spatialAttachedRef.current = true
+      }
+    }
 
     const dist = camera.position.distanceTo(artifactWorldPos)
 
@@ -213,12 +343,62 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
     const journeyFade = proximity * ahead * behind
 
     const isFocused = state.mode === 'focus' && state.focusedProjectId === project.id
-
-    const prox = THREE.MathUtils.clamp((14.0 - dist) / (14.0 - 2.5), 0, 1)
-    const audioLevel = Math.min(1, prox * 0.85 + cue * 0.65 + (isFocused ? 0.9 : 0))
-    audioManager.setProjectLevel(project.id, audioLevel)
-
     const focusAmt = isFocused ? state.focusAmount : 0
+
+    const focusJustEnded = prevFocused.current && !isFocused
+    if (focusJustEnded) {
+      lightMemoryTau.current = 2.2
+      lightMemoryStrength.current = Math.min(1, Math.max(lightMemoryStrength.current, 0.65))
+    } else if (cue > 0.08 || focusAmt > 0.08) {
+      lightMemoryTau.current = 1.3
+    }
+    prevFocused.current = isFocused
+
+    const personalityNow = THREE.MathUtils.clamp(cue * 0.7 + focusAmt * 0.85, 0, 1)
+    if (personalityNow > 0.08) {
+      lightMemoryStrength.current = Math.max(lightMemoryStrength.current, personalityNow)
+      if (project.lighting?.color) {
+        lightMemoryColor.current.lerp(new THREE.Color(project.lighting.color), 1 - Math.exp(-2.0 * dt))
+      }
+    }
+
+    lightMemoryStrength.current = THREE.MathUtils.damp(lightMemoryStrength.current, 0, 1 / lightMemoryTau.current, dt)
+    const trail = THREE.MathUtils.clamp(lightMemoryStrength.current, 0, 1)
+
+    if (focusJustEnded) {
+      emissiveMemoryTau.current = 2.2
+      emissiveMemoryStrength.current = Math.min(1, Math.max(emissiveMemoryStrength.current, 0.65))
+    } else if (cue > 0.08 || focusAmt > 0.08) {
+      emissiveMemoryTau.current = 1.25
+    }
+
+    if (personalityNow > 0.06) {
+      emissiveMemoryStrength.current = Math.max(emissiveMemoryStrength.current, personalityNow)
+    }
+    emissiveMemoryStrength.current = THREE.MathUtils.damp(emissiveMemoryStrength.current, 0, 1 / emissiveMemoryTau.current, dt)
+    const glowMemory = THREE.MathUtils.clamp(emissiveMemoryStrength.current, 0, 1)
+
+    const proxAudio = THREE.MathUtils.clamp((28.0 - dist) / (28.0 - 2.75), 0, 1)
+
+    if (project.audio) {
+      spatialAudioSystem.applyProjectDrive(
+        project.id,
+        {
+          base: project.audio.base,
+          filterType: project.audio.filter.type,
+          filterFreq: project.audio.filter.freq,
+          filterQ: project.audio.filter.q,
+          reverbWet: project.audio.reverb,
+          reverbDecay: 2.4 + project.audio.reverb * 2.2,
+          width: project.audio.width,
+        },
+        {
+          proximity: proxAudio * (0.85 + cue * 0.55),
+          focus: isFocused ? state.focusAmount : 0,
+        },
+      )
+    }
+
     const cover = THREE.MathUtils.clamp((focusAmt - 0.05) / 0.35, 0, 1)
     const title = THREE.MathUtils.clamp((focusAmt - 0.18) / 0.45, 0, 1)
     const sub = THREE.MathUtils.clamp((focusAmt - 0.28) / 0.55, 0, 1)
@@ -265,24 +445,26 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
 
     const brightness = isFocused ? 1 : THREE.MathUtils.clamp(0.7 + cue * 0.6, 0, 1)
     material.color.lerpColors(baseColor, brightColor, brightness)
-    material.emissiveIntensity = THREE.MathUtils.damp(material.emissiveIntensity, 0.34 + cue * 1.15 + (isFocused ? 0.35 : 0), 3.5, 1 / 60)
+    const tint = tmpEmissive.setHSL(personality.tintH, personality.tintS, personality.tintL)
+    material.roughness = THREE.MathUtils.damp(material.roughness, personality.roughness, 2.0, dt)
+    material.metalness = THREE.MathUtils.damp(material.metalness, personality.metalness, 2.0, dt)
+    material.emissive.copy(neutralEmissive).lerp(tint, 0.06)
 
-    const ph = clock.getElapsedTime() * 1.8 + pulsePhase * Math.PI * 2
-    const s = 0.5 + 0.5 * Math.sin(ph)
-    const breath = s * s * (3 - 2 * s)
-    const baseGlow = 0.25 + cue * 0.35 + (isFocused ? 0.55 : 0)
-    const ampGlow = 0.9 + cue * 0.8 + (isFocused ? 0.95 : 0)
-    const glowTarget = baseGlow + ampGlow * breath
+    const proximityClarity = THREE.MathUtils.clamp((18.0 - dist) / (18.0 - 3.5), 0, 1)
+    const clarityEase = proximityClarity * proximityClarity * (3 - 2 * proximityClarity)
+    const presence = Math.max(personalityNow, glowMemory * 0.85)
+    const emissiveTarget = 0.14 + presence * (0.22 + clarityEase * 0.08) + (isFocused ? 0.08 : 0)
+    material.emissiveIntensity = THREE.MathUtils.damp(material.emissiveIntensity, emissiveTarget, 1.8, dt)
+
+    const glowTarget = 0.09 + presence * 0.08 + (isFocused ? 0.05 : 0)
     ;(glowMaterial.uniforms.uIntensity.value as number) = THREE.MathUtils.damp(
       glowMaterial.uniforms.uIntensity.value as number,
       glowTarget,
-      4.0,
-      1 / 60,
+      2.2,
+      dt,
     )
     if (glowRef.current) {
       glowRef.current.rotation.copy(mesh.rotation)
-      const sTarget = 1.1 + cue * 0.12 + (isFocused ? 0.18 : 0.08) + breath * 0.14
-      glowRef.current.scale.setScalar(THREE.MathUtils.damp(glowRef.current.scale.x, sTarget, 5.0, 1 / 60))
     }
 
     if (lightRef.current) {
@@ -290,17 +472,18 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
       const baseColor = new THREE.Color('#b8c2d6')
       const targetColor = new THREE.Color(profile?.color ?? '#b8c2d6')
 
-      const personality = THREE.MathUtils.clamp(cue * 0.7 + focusAmt * 0.85, 0, 1)
-      const color = baseColor.lerp(targetColor, personality * 0.35)
+      const personality = personalityNow
+      const trailColor = baseColor.clone().lerp(lightMemoryColor.current, trail * 0.18)
+      const color = baseColor.lerp(targetColor, personality * 0.35).lerp(trailColor, (1 - personality) * trail)
       lightRef.current.color.lerp(color, 1 - Math.exp(-2.2 * dt))
 
-      const baseI = 0.12
+      const baseI = 0.18
       const profI = profile?.intensity ?? 1
-      const targetI = baseI * (0.7 + profI * 0.6) + personality * (0.18 + profI * 0.22)
+      const targetI = baseI * (0.8 + profI * 0.75) + personality * (0.28 + profI * 0.34) + trail * 0.06
       lightRef.current.intensity = THREE.MathUtils.damp(lightRef.current.intensity, targetI, 2.6, dt)
 
       const baseD = profile?.distance ?? 11
-      const targetD = baseD + personality * (6 + baseD * 0.25)
+      const targetD = baseD * 1.35 + personality * (9 + baseD * 0.35) + trail * 2.2
       lightRef.current.distance = THREE.MathUtils.damp(lightRef.current.distance, targetD, 2.6, dt)
       lightRef.current.decay = 2
     }
@@ -312,7 +495,8 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
       textRef.current.scale.setScalar(THREE.MathUtils.damp(textRef.current.scale.x, scale, 6, 1 / 60))
     }
 
-    const targetGroupScale = isFocused ? 1.03 : 0.94 + cue * 0.12
+    const baseSize = personality.size
+    const targetGroupScale = (isFocused ? 1.03 : 0.94 + cue * 0.12) * baseSize
     group.scale.setScalar(THREE.MathUtils.damp(group.scale.x, targetGroupScale, 4.0, 1 / 60))
 
     if (detailGroupRef.current && isFocused) {
@@ -357,22 +541,21 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
             <planeGeometry args={[1, 1]} />
           </mesh>
 
-          <group position={[-0.86, 0.02, 0.01]}>
+          <group position={[-0.74, 0.02, 0.01]}>
             <mesh material={coverMat ?? detailMat} scale={[1.05, 1.38, 1]}>
               <planeGeometry args={[1, 1]} />
             </mesh>
           </group>
 
-          <group position={[0.55, 0.45, 0.02]}>
+          <group position={[0.38, 0.45, 0.02]}>
             <group ref={titleRef} scale={0}>
               <Text
                 fontSize={0.22}
                 color="#e3e9f6"
                 anchorX="left"
                 anchorY="middle"
-                maxWidth={1.65}
               >
-                {project.title}
+                {titleLine}
               </Text>
             </group>
             <group ref={subRef} position={[0, -0.22, 0]} scale={0}>
@@ -381,9 +564,8 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
                 color="#9aa4b2"
                 anchorX="left"
                 anchorY="middle"
-                maxWidth={1.65}
               >
-                {project.subtitle}
+                {subtitleLine}
               </Text>
             </group>
             <group ref={descRef} position={[0, -0.55, 0]} scale={0}>
@@ -416,31 +598,29 @@ export function ProjectArtifact({ project, position }: ProjectArtifactProps) {
                   {l.label}
                 </Text>
               ))}
-            </group>
           </group>
         </group>
       </group>
-      <group ref={textRef} position={[0, -1.0, 0]} scale={0}>
-        <Text
-          fontSize={0.26}
-          color="#cfd6e6"
-          anchorX="center"
-          anchorY="middle"
-          maxWidth={2.8}
-        >
-          {project.title}
-        </Text>
-        <Text
-          fontSize={0.16}
-          color="#7f889c"
-          anchorX="center"
-          anchorY="middle"
-          position={[0, -0.35, 0]}
-          maxWidth={3.2}
-        >
-          {project.subtitle}
-        </Text>
-      </group>
     </group>
+    <group ref={textRef} position={[0, -1.0, 0]} scale={0}>
+      <Text
+        fontSize={0.26}
+        color="#cfd6e6"
+        anchorX="center"
+        anchorY="middle"
+      >
+        {titleLine}
+      </Text>
+      <Text
+        fontSize={0.16}
+        color="#7f889c"
+        anchorX="center"
+        anchorY="middle"
+        position={[0, -0.28, 0]}
+      >
+        {subtitleLine}
+      </Text>
+    </group>
+  </group>
   )
 }

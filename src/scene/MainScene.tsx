@@ -19,6 +19,10 @@ function LightRig() {
   const ambientRef = useRef<THREE.AmbientLight>(null)
   const moonRef = useRef<THREE.PointLight>(null)
   const tmpColor = useRef(new THREE.Color())
+  const memoryColor = useRef(new THREE.Color('#b8c2d6'))
+  const memoryStrength = useRef(0)
+  const memoryTau = useRef(1.6)
+  const prevFocusedId = useRef<string | null>(null)
 
   useFrame((_, dt) => {
     const focus = interactionState.getState().focusAmount
@@ -34,13 +38,32 @@ function LightRig() {
     const profileIntensity = profile?.intensity ?? 1
 
     const lift = Math.min(1, arrival * 0.9 + portal * 0.9)
-    const dim = 1 - focusEase * 0.25
+    const dim = 1 - focusEase * 0.33
 
     const personality = THREE.MathUtils.clamp(arrival * 0.6 + focusEase * 0.85, 0, 1)
-    tmpColor.current.set('#b8c2d6').lerp(new THREE.Color(profileColor), personality * 0.25)
+
+    const focusJustEnded = prevFocusedId.current && !focusedId
+    if (focusJustEnded) {
+      memoryTau.current = 2.6
+      memoryStrength.current = Math.min(1, Math.max(memoryStrength.current, 0.55))
+    } else if (personality > 0.08) {
+      memoryTau.current = 1.6
+    }
+
+    prevFocusedId.current = focusedId
+
+    if (activeId && personality > 0.08) {
+      memoryColor.current.lerp(new THREE.Color(profileColor), 1 - Math.exp(-2.2 * dt))
+      memoryStrength.current = Math.max(memoryStrength.current, personality)
+    }
+
+    memoryStrength.current = THREE.MathUtils.damp(memoryStrength.current, 0, 1 / memoryTau.current, dt)
+    const trail = THREE.MathUtils.clamp(memoryStrength.current, 0, 1)
+
+    tmpColor.current.set('#b8c2d6').lerp(memoryColor.current, trail * 0.22)
 
     if (ambientRef.current) {
-      const target = (0.07 + lift * 0.05) * dim
+      const target = (0.07 + lift * 0.05 + trail * 0.02) * dim
       ambientRef.current.intensity = THREE.MathUtils.damp(ambientRef.current.intensity, target, 2.2, dt)
       ambientRef.current.color.lerp(tmpColor.current, 1 - Math.exp(-1.5 * dt))
     }
@@ -55,7 +78,7 @@ function LightRig() {
 
       moonRef.current.position.lerp(pos, 1 - Math.exp(-3.0 * dt))
 
-      const target = (0.35 + lift * 0.35) * dim * (0.95 + 0.08 * profileIntensity)
+      const target = (0.35 + lift * 0.35 + trail * 0.05) * dim * (0.95 + 0.08 * profileIntensity)
       moonRef.current.intensity = THREE.MathUtils.damp(moonRef.current.intensity, target, 2.2, dt)
       moonRef.current.distance = THREE.MathUtils.damp(moonRef.current.distance, 55 + lift * 35, 2.2, dt)
       moonRef.current.color.lerp(tmpColor.current, 1 - Math.exp(-1.5 * dt))
