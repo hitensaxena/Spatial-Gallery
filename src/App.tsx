@@ -8,7 +8,13 @@ import './App.css'
 
 function App() {
   const { active, progress } = useProgress()
-  const threeReady = !active && progress >= 100
+  const [seenThreeLoading, setSeenThreeLoading] = useState(false)
+
+  useEffect(() => {
+    if (active) setSeenThreeLoading(true)
+  }, [active])
+
+  const threeReady = seenThreeLoading ? (!active && progress >= 100) : true
 
   const [wavReady, setWavReady] = useState(false)
   const [audioReady, setAudioReady] = useState(audioContextManager.isStarted())
@@ -55,7 +61,9 @@ function App() {
   return (
     <div className="app">
       <div className="scene" aria-hidden>
-        {readyToReveal ? <MainScene /> : null}
+        <div className={readyToReveal ? 'scene-ready' : 'scene-hidden'}>
+          <MainScene />
+        </div>
       </div>
       {status !== 'ready' ? (
         <div
